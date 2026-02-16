@@ -7,13 +7,13 @@ let currentTab = "posts";
 let authMode = "login";
 
 /**
- * 本家風エラー・通知表示 (Toast)
+ * トースト通知表示
  */
 function showError(msg) {
     const toast = document.getElementById('toast');
+    if (!toast) return console.error(msg);
     toast.innerText = msg;
     toast.classList.add('show');
-    // 3秒後に非表示
     setTimeout(() => {
         toast.classList.remove('show');
     }, 3000);
@@ -24,19 +24,16 @@ function showError(msg) {
  */
 async function initApp() {
     try {
-        // 1. サーバーからSupabase接続情報を取得
         const res = await fetch('/api/config');
         const config = await res.json();
         
         if (!config.supabaseUrl || !config.supabaseKey) {
-            showError("設定が見つかりません。envファイルを確認してください。");
+            showError("接続設定が見つかりません。");
             return;
         }
 
-        // 2. Supabaseクライアント初期化
         _supabase = supabase.createClient(config.supabaseUrl, config.supabaseKey);
 
-        // 3. ログイン状態の確認
         const { data: { user } } = await _supabase.auth.getUser();
         if (user) {
             const { data: profile, error } = await _supabase.from('profiles').select('*').eq('id', user.id).single();
@@ -44,17 +41,18 @@ async function initApp() {
                 me = { ...profile, name: profile.display_name };
                 showApp();
             } else {
-                // プロフィールがない場合はログアウト処理
+                console.warn("プロフィール未作成のユーザーです");
                 await _supabase.auth.signOut();
             }
         }
     } catch (e) {
-        showError("初期化に失敗しました。再読み込みしてください。");
+        console.error(e);
+        showError("初期化に失敗しました。");
     }
 }
 
 /**
- * 認証画面の切り替え
+ * 認証画面切り替え
  */
 function switchAuthMode(mode) {
     authMode = mode;
@@ -66,76 +64,68 @@ function switchAuthMode(mode) {
     if (mode === 'signup') {
         nameField.classList.remove('hidden');
         submitBtn.innerText = "新規登録";
-        tabSignup.className = "flex-1 py-2 font-bold active-tab";
-        tabLogin.className = "flex-1 py-2 font-bold text-[#71767b]";
+        tabSignup.className = "flex-1 py-2 font-bold active-tab text-center";
+        tabLogin.className = "flex-1 py-2 font-bold text-[#71767b] text-center";
     } else {
         nameField.classList.add('hidden');
         submitBtn.innerText = "ログイン";
-        tabLogin.className = "flex-1 py-2 font-bold active-tab";
-        tabSignup.className = "flex-1 py-2 font-bold text-[#71767b]";
+        tabLogin.className = "flex-1 py-2 font-bold active-tab text-center";
+        tabSignup.className = "flex-1 py-2 font-bold text-[#71767b] text-center";
     }
 }
 
 /**
- * 認証実行 (メールアドレス不要ロジック)
+ * 認証実行 (登録・ログイン)
  */
 async function handleAuth() {
-    const handle = document.getElementById('auth-handle').value.toLowerCase().replace('@', '').trim();
+    const handleInput = document.getElementById('auth-handle').value.toLowerCase().replace('@', '').trim();
     const pass = document.getElementById('auth-pass').value.trim();
     const name = document.getElementById('auth-name').value.trim();
 
-    if (!handle || !pass) {
-        return showError("ユーザー名とパスワードを入力してください");
-    }
+    if (!handleInput || !pass) return showError("入力が不足しています");
 
-    // 内部的に使用するダミーメールアドレス
-    const dummyEmail = `${handle}@x-clone-dummy.com`;
+    const dummyEmail = `${handleInput}@x-clone-dummy.com`;
 
     if (authMode === 'signup') {
         if (!name) return showError("名前を入力してください");
         
-        const { data, error } = await _supabase.auth.signUp({
+        // 1. ユーザー作成
+        const { data, error: authError } = await _supabase.auth.signUp({
             email: dummyEmail,
             password: pass
         });
 
-        if (error) {
-            return showError("登録に失敗しました: " + error.message);
-        }
+        if (authError) return alert("登録エラー: " + authError.message);
 
-        // 成功したらprofilesテーブルにユーザー情報を追加
-        const { error: profileError } = await _supabase.from('profiles').insert([{
+        // 2. プロフィール作成 (初期値を確実にセット)
+        const { error: profError } = await _supabase.from('profiles').insert([{
             id: data.user.id,
-            handle: handle,
+            handle: handleInput,
             display_name: name,
             bio: "よろしくお願いします。",
-            following: [],
-            followers: []
+            following: [], // 初期値を空配列に
+            followers: []  // 初期値を空配列に
         }]);
 
-        if (profileError) {
-            return showError("プロフィール作成に失敗しました");
+        if (profError) {
+            console.error(profError);
+            return alert("プロフィールの作成に失敗しました: " + profError.message);
         }
 
+        alert("登録が完了しました！");
         location.reload();
     } else {
         // ログイン
-        const { error } = await _supabase.auth.signInWithPassword({
+        const { error: loginError } = await _supabase.auth.signInWithPassword({
             email: dummyEmail,
             password: pass
         });
 
-        if (error) {
-            return showError("ユーザー名またはパスワードが正しくありません");
-        }
-        
+        if (loginError) return showError("ユーザー名またはパスワードが違います");
         location.reload();
     }
 }
 
-/**
- * アプリ画面の表示
- */
 function showApp() {
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('sidebar').classList.remove('hidden');
@@ -144,23 +134,18 @@ function showApp() {
     fetchData();
 }
 
-/**
- * ログアウト
- */
 async function logout() {
     await _supabase.auth.signOut();
     location.reload();
 }
 
 /**
- * データの同期取得
+ * データ取得
  */
 async function fetchData() {
-    // 投稿の取得
     const { data: pData } = await _supabase.from('posts').select('*').order('created_at', { ascending: false });
     posts = pData || [];
 
-    // 全ユーザーのプロフィール取得（簡易的なハッシュマップ作成）
     const { data: uData } = await _supabase.from('profiles').select('*');
     users = (uData || []).reduce((acc, u) => ({
         ...acc,
@@ -172,7 +157,7 @@ async function fetchData() {
 }
 
 /**
- * 投稿の実行
+ * 投稿送信
  */
 async function submitPost() {
     const input = document.getElementById('post-input');
@@ -190,7 +175,7 @@ async function submitPost() {
     }]);
 
     if (error) {
-        showError("ポストの送信に失敗しました");
+        showError("送信に失敗しました");
     } else {
         input.value = "";
         togglePostBtn('post-btn', 'post-input');
@@ -199,15 +184,12 @@ async function submitPost() {
 }
 
 /**
- * 反応系 (いいね・リポスト)
+ * リアクション系
  */
 async function toggleLike(id) {
     const p = posts.find(x => x.id === id);
     const likes = p.likes || [];
-    const newLikes = likes.includes(me.handle) 
-        ? likes.filter(h => h !== me.handle) 
-        : [...likes, me.handle];
-
+    const newLikes = likes.includes(me.handle) ? likes.filter(h => h !== me.handle) : [...likes, me.handle];
     await _supabase.from('posts').update({ likes: newLikes }).eq('id', id);
     fetchData();
 }
@@ -215,45 +197,30 @@ async function toggleLike(id) {
 async function toggleRepost(id) {
     const p = posts.find(x => x.id === id);
     const reps = p.reposts || [];
-    const newReps = reps.includes(me.handle) 
-        ? reps.filter(h => h !== me.handle) 
-        : [...reps, me.handle];
-
+    const newReps = reps.includes(me.handle) ? reps.filter(h => h !== me.handle) : [...reps, me.handle];
     await _supabase.from('posts').update({ reposts: newReps }).eq('id', id);
     fetchData();
 }
 
-/**
- * 返信の送信
- */
 async function submitReply(postId) {
     const input = document.getElementById(`reply-input-${postId}`);
     const content = input.value.trim();
     if (!content) return;
 
     const p = posts.find(x => x.id === postId);
-    const newReply = {
-        id: Date.now(),
-        handle: me.handle,
-        name: me.name,
-        content: content
-    };
+    const newReply = { id: Date.now(), handle: me.handle, name: me.name, content: content };
     const updatedReplies = [...(p.replies || []), newReply];
 
-    const { error } = await _supabase.from('posts').update({ replies: updatedReplies }).eq('id', postId);
-    if (error) {
-        showError("返信に失敗しました");
-    } else {
-        fetchData();
-    }
+    await _supabase.from('posts').update({ replies: updatedReplies }).eq('id', postId);
+    fetchData();
 }
 
 /**
- * フォロー・フォロー解除
+ * フォロー機能 (undefined対策)
  */
 async function toggleFollow(targetHandle) {
     const target = users[targetHandle];
-    if (!target) return;
+    if (!target || targetHandle === me.handle) return;
 
     let myFollowing = me.following || [];
     let targetFollowers = target.followers || [];
@@ -273,28 +240,17 @@ async function toggleFollow(targetHandle) {
     fetchData();
 }
 
-/**
- * プロフィール編集の保存
- */
 async function saveProfile() {
     const newName = document.getElementById('edit-name').value.trim();
     const newBio = document.getElementById('edit-bio').value.trim();
-    
     if (!newName) return showError("名前は必須です");
 
     const { error } = await _supabase.from('profiles').update({ 
-        display_name: newName, 
-        bio: newBio 
+        display_name: newName, bio: newBio 
     }).eq('id', me.id);
 
-    if (error) {
-        showError("保存に失敗しました");
-    } else {
-        me.name = newName;
-        me.bio = newBio;
-        toggleEditModal();
-        fetchData();
-    }
+    if (error) showError("保存失敗");
+    else { me.name = newName; me.bio = newBio; toggleEditModal(); fetchData(); }
 }
 
 /**
@@ -302,7 +258,10 @@ async function saveProfile() {
  */
 function nav(v, handle = "me") {
     const views = ['view-home', 'view-explore', 'view-profile'];
-    views.forEach(id => document.getElementById(id).classList.add('hidden'));
+    views.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
     document.getElementById('view-' + v).classList.remove('hidden');
     
     if (v === 'profile') { 
@@ -318,7 +277,7 @@ function nav(v, handle = "me") {
 }
 
 /**
- * HTML生成系
+ * HTML生成 (安全なプロパティアクセス)
  */
 function createPostHTML(p) {
     const isLiked = (p.likes || []).includes(me.handle);
@@ -343,15 +302,9 @@ function createPostHTML(p) {
                         </div>
                         <p class="mt-1 text-[15px] leading-normal whitespace-pre-wrap">${p.content}</p>
                         <div class="flex justify-between mt-3 text-[#71767b] max-w-[425px]">
-                            <span class="flex items-center gap-2 hover:text-blue-400" onclick="event.stopPropagation(); toggleReply(${p.id})">
-                                <svg viewBox="0 0 24 24" class="icon-sm"><path d="M1.751 10c0-4.42 3.584-8 8.001-8s8.001 3.58 8.001 8c0 4.42-3.584 8-8.001 8s-8.001-3.58-8.001-8zM10 4a6 6 0 100 12 6 6 0 000-12z"/></svg> ${repliesCount}
-                            </span>
-                            <span onclick="event.stopPropagation(); toggleRepost(${p.id})" class="flex items-center gap-2 hover:text-green-500 ${isReposted ? 'text-green-500' : ''}">
-                                <svg viewBox="0 0 24 24" class="icon-sm"><path d="M4.5 3.88l4.432 4.43-1.06 1.06L5.25 6.75v6.75a7.5 7.5 0 0015 0h1.5a9 9 0 11-18 0V6.75L1.128 9.37l-1.06-1.06L4.5 3.88z"/></svg> ${p.reposts.length}
-                            </span>
-                            <span onclick="event.stopPropagation(); toggleLike(${p.id})" class="flex items-center gap-2 hover:text-pink-500 ${isLiked ? 'text-pink-500' : ''}">
-                                <svg viewBox="0 0 24 24" class="icon-sm" style="fill:${isLiked ? '#f91880' : 'none'}; stroke:${isLiked ? '#f91880' : 'currentColor'}"><path d="M16.697 5.5c-1.222-.06-2.679.351-3.53 2.12L12 9.356l-1.167-1.736c-.85-1.769-2.308-2.18-3.53-2.12-2.73.06-4.914 2.312-4.914 5.15 0 5.045 4.054 8.299 9.074 12.484a.658.658 0 00.836 0c5.02-4.185 9.074-7.439 9.074-12.484 0-2.838-2.183-5.09-4.914-5.15z" stroke-width="1.5"/></svg> ${p.likes.length}
-                            </span>
+                            <span class="flex items-center gap-2 hover:text-blue-400">💬 ${repliesCount}</span>
+                            <span onclick="event.stopPropagation(); toggleRepost(${p.id})" class="flex items-center gap-2 hover:text-green-500 ${isReposted ? 'text-green-500' : ''}">🔄 ${p.reposts.length}</span>
+                            <span onclick="event.stopPropagation(); toggleLike(${p.id})" class="flex items-center gap-2 hover:text-pink-500 ${isLiked ? 'text-pink-500' : ''}">${isLiked ? '❤️' : '🖤'} ${p.likes.length}</span>
                         </div>
                     </div>
                 </div>
@@ -366,9 +319,6 @@ function createPostHTML(p) {
         </div>`;
 }
 
-/**
- * 描画更新
- */
 function refreshCurrentView() {
     if (!document.getElementById('view-home').classList.contains('hidden')) renderHome();
     if (!document.getElementById('view-profile').classList.contains('hidden')) renderProfile();
@@ -428,15 +378,11 @@ function renderSuggestions() {
         </div>`).join('');
 }
 
-/**
- * UIパーツ操作
- */
 function setTab(t) {
     currentTab = t;
     ['posts', 'likes'].forEach(x => {
         const el = document.getElementById('tab-' + x);
-        if (x === t) el.classList.add('active-tab');
-        else el.classList.remove('active-tab');
+        if (el) x === t ? el.classList.add('active-tab') : el.classList.remove('active-tab');
     });
     renderProfile();
 }
@@ -450,13 +396,12 @@ function toggleEditModal() {
 
 function toggleReply(id) {
     const section = document.getElementById(`replies-${id}`);
-    section.classList.toggle('hidden');
+    if (section) section.classList.toggle('hidden');
 }
 
 function togglePostBtn(btnId, inputId) {
-    const val = document.getElementById(inputId).value.trim();
-    document.getElementById(btnId).disabled = (val === "");
+    const el = document.getElementById(btnId);
+    if (el) el.disabled = (document.getElementById(inputId).value.trim() === "");
 }
 
-// 実行開始
 initApp();
