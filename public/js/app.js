@@ -84,7 +84,8 @@ async function handleAuth() {
 
     if (!handleInput || !pass) return showError("入力が不足しています");
 
-    const dummyEmail = `${handleInput}@x-clone-dummy.com`;
+    // バリデーションエラー回避のため実在しやすいドメインを使用
+    const dummyEmail = `${handleInput}@gmail.com`;
 
     if (authMode === 'signup') {
         if (!name) return showError("名前を入力してください");
@@ -97,14 +98,14 @@ async function handleAuth() {
 
         if (authError) return alert("登録エラー: " + authError.message);
 
-        // 2. プロフィール作成 (初期値を確実にセット)
+        // 2. プロフィール作成 (SQLポリシー "Anyone can insert profiles" により実行可能)
         const { error: profError } = await _supabase.from('profiles').insert([{
             id: data.user.id,
             handle: handleInput,
             display_name: name,
             bio: "よろしくお願いします。",
-            following: [], // 初期値を空配列に
-            followers: []  // 初期値を空配列に
+            following: [], 
+            followers: [] 
         }]);
 
         if (profError) {
@@ -179,6 +180,19 @@ async function submitPost() {
     } else {
         input.value = "";
         togglePostBtn('post-btn', 'post-input');
+        fetchData();
+    }
+}
+
+/**
+ * ポスト削除 (新規追加)
+ */
+async function deletePost(postId) {
+    if (!confirm("ポストを削除しますか？")) return;
+    const { error } = await _supabase.from('posts').delete().eq('id', postId);
+    if (error) {
+        showError("削除に失敗しました");
+    } else {
         fetchData();
     }
 }
@@ -277,11 +291,12 @@ function nav(v, handle = "me") {
 }
 
 /**
- * HTML生成 (安全なプロパティアクセス)
+ * HTML生成 (削除ボタンを追加)
  */
 function createPostHTML(p) {
     const isLiked = (p.likes || []).includes(me.handle);
     const isReposted = (p.reposts || []).includes(me.handle);
+    const isMyPost = p.handle === me.handle;
     const repliesCount = (p.replies || []).length;
     
     const repliesList = (p.replies || []).map(r => `
@@ -297,8 +312,15 @@ function createPostHTML(p) {
                 <div class="flex gap-3">
                     <div class="w-10 h-10 rounded-full bg-blue-600 shrink-0" onclick="event.stopPropagation(); nav('profile', '${p.handle}')"></div>
                     <div class="flex-1">
-                        <div class="flex items-center gap-1 font-bold" onclick="event.stopPropagation(); nav('profile', '${p.handle}')">
-                            ${p.name} <span class="font-normal text-[#71767b]">@${p.handle}</span>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-1 font-bold" onclick="event.stopPropagation(); nav('profile', '${p.handle}')">
+                                ${p.name} <span class="font-normal text-[#71767b]">@${p.handle}</span>
+                            </div>
+                            ${isMyPost ? `
+                                <button onclick="event.stopPropagation(); deletePost(${p.id})" class="text-[#71767b] hover:text-red-500 p-1">
+                                    🗑️
+                                </button>
+                            ` : ''}
                         </div>
                         <p class="mt-1 text-[15px] leading-normal whitespace-pre-wrap">${p.content}</p>
                         <div class="flex justify-between mt-3 text-[#71767b] max-w-[425px]">
